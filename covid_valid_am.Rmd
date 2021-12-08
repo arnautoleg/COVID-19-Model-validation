@@ -153,7 +153,7 @@ data <- data_full %>%
                                 ordered = TRUE))
 
 data
-write.csv(data,file = "data_all_analyzes.csv")
+write.csv(data, file = "data_all_analyzes.csv")
 ```
 ```{r}
 data_9 <- select(data, c(id, Outcome, DaysBfOutcome, DayOfHosp, AnalysisDate, 'd-dimer', urea, limphocite_perc, crp, protein_total, aptt, wbc, hg, glucose)) 
@@ -194,7 +194,7 @@ score_9$score  <- ifelse(score_9$wbc > 13.5 & !is.na(score_9$wbc), score_9$score
 score_9$score  <- ifelse(score_9$hg < 115 & !is.na(score_9$hg), score_9$score + 3, score_9$score)
 score_9$score  <- ifelse(score_9$glucose > 9 & !is.na(score_9$glucose), score_9$score + 4, score_9$score)
 score_9
-write.csv(data,file = "score_9.csv")
+write.csv(score_9,file = "score_9.csv")
 ```
 ```{r}
 p <- ggplot(score_9, aes(x = DaysBfOutcome, y = score, fill = Outcome)) + 
@@ -249,6 +249,19 @@ ggplot(sum, aes(x=DaysBfOutcome, y=score, colour=Outcome)) +
     geom_line(position=pd) +
     geom_point(position=pd) + theme_bw()
 ```
+для каждого ищем худший балл за время госпитализации, смотрим сколько из умерших и выживших хоть раз его перевалили
+```{r}
+length(unique(score_9$id))
+table(data_full$DaysBfOutcome)
+str(data)
+
+t <- as.data.frame(is.na(score_9[,6:15]))
+
+t
+
+
+```
+
 
 
 
