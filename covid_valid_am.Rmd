@@ -10,12 +10,15 @@ knitr::opts_chunk$set(echo = FALSE,
                       message=FALSE,
                       error=FALSE,
                       warning=FALSE)
-library(dplyr)
+
 library(tidyr)
 require(lubridate)
 library(ggplot2)
 library(stringr)
 library(zoo)
+
+library(flextable)
+library(dplyr)
 ```
 ## Read data
 ```{r}
@@ -38,6 +41,7 @@ transferuri$hospit_days <- transferuri$EndDate - transferuri$StartDate
 hosp_days <- transferuri %>%                                       
   group_by(id) %>%                         
   summarise(hospit_days_total = sum(hospit_days)) 
+
 transferuri <-  merge(transferuri, hosp_days, by="id")
 transferuri$OutcomeDate <- transferuri$StartDate + transferuri$hospit_days_total 
 
@@ -73,6 +77,9 @@ data_long <- filter(data_long, Outcome != 'transfer inter-spitalicesc')
 data_long$Outcome <- as.factor(ifelse(substring(tolower(data_long$Outcome),1,1)=='e', 0, 1))
 
 # Количество пациентов после фильтрации
+length(unique(data_long$id))
+# Фильтруем тех, у кого исход наступил менее чем за три дня:
+data_long <- filter(data_long, hospit_days_total > 2)
 length(unique(data_long$id))
 ```
 ```{r}
@@ -163,7 +170,7 @@ data_9
 # Boxplots 
 ```{r}
 ggplot(data %>% filter(`protein_total` < 200), aes(x = DaysBfOutcome, y = protein_total, fill = Outcome)) + 
-  geom_boxplot()
+  geom_boxplot() 
 
 ggplot(data, aes(x = DaysBfOutcome, y = `urea`, fill = Outcome)) + 
   geom_boxplot()
@@ -177,6 +184,29 @@ ggplot(data, aes(x = DaysBfOutcome, y = `wbc`, fill = Outcome)) +
 
 ggplot(data, aes(x = DaysBfOutcome, y = limphocite_perc , fill = Outcome)) + 
   geom_boxplot() + ylim(0,10)
+```
+
+
+```{r}
+data_p <- data[, which(colMeans(!is.na(data)) > 0.3)]
+colnames(data_p) <- gsub(' ','_', colnames(data_p))
+colnames(data_p) <- gsub('-','_', colnames(data_p))
+colnames(data_p) <- gsub('[()]','', colnames(data_p))
+# for(i in 6:40) {
+#   arg <- colnames(data_p)[i]
+#   p <- ggplot(data_p, aes_string(x = 'DaysBfOutcome', y = arg, fill = 'Outcome')) + 
+#   geom_boxplot() +  ylab(arg)
+#   name <- capture.output(cat("plot_", arg,".png", sep = '' ))
+#   ggsave(name)
+# }
+
+
+colnames(data_p)
+arg <- colnames(data_p)[7]
+ggplot(data_p, aes_string(x = 'DaysBfOutcome', y = arg, fill = 'Outcome')) + 
+  geom_boxplot() +  ylab(arg)
+ggplot(data, aes(x = DaysBfOutcome, y = `aptt`, fill = Outcome)) + 
+  geom_boxplot()
 
 ```
 
@@ -244,23 +274,95 @@ sum <- summarySE(score_9, measurevar="score", groupvars=c("DaysBfOutcome","Outco
 
 pd <- position_dodge(0.1) # move them .05 to the left and right
 
-ggplot(sum, aes(x=DaysBfOutcome, y=score, colour=Outcome)) + 
+p <-ggplot(sum, aes(x=DaysBfOutcome, y=score, colour=Outcome)) + 
     geom_errorbar(aes(ymin=score-ci, ymax=score+ci), width=.1, position=pd) +
     geom_line(position=pd) +
-    geom_point(position=pd) + theme_bw()
+    geom_point(position=pd) + theme_bw() + ylab("Average score + 95% CI") + xlab("Day before outcome") +  scale_color_manual(labels=c("Discharge","Death"), values = c("#00BFC4", "#F8766B"))
+p
 ```
-для каждого ищем худший балл за время госпитализации, смотрим сколько из умерших и выживших хоть раз его перевалили
+Оценка шансов
+
 ```{r}
-length(unique(score_9$id))
-table(data_full$DaysBfOutcome)
-str(data)
+# count max_score
+score_9_max <- score_9 %>% group_by(id, Outcome) %>% summarise(max_score = max(score, na.rm = TRUE)) %>% filter(!is.na(max_score))
+score_9_max
 
-t <- as.data.frame(is.na(score_9[,6:15]))
+# logistic regression
+glm_outcome <- glm(Outcome ~ max_score, family=binomial, data = score_9_max)
+summary(glm_outcome)
 
-t
+# outcome prediction
+max_score <- seq(1,36, by = 1)
+scores <- as.data.frame(max_score)
+
+predictions <- predict.glm(glm_outcome, scores, type="response", se.fit = TRUE)
+
+scores$outcome_pr <- predictions$fit
+ci <- 1.96 * predictions$se.fit
+scores$ci_low_pr <- predictions$fit - ci
+scores$ci_up_pr <- predictions$fit + ci
+
+scores$odd <- round(scores$outcome_pr/(1- scores$outcome_pr), 5)
+scores$ci_low_odd <- round(scores$ci_low_pr/(1- scores$ci_low_pr), 5)
+scores$ci_up_odd <- round(scores$ci_up_pr/(1-scores$ci_up_pr), 5)
+scores
+
+scores$max_score <- as.factor(scores$max_score)
+
+
+pd <- position_dodge(0.1) # move them .05 to the left and right
+ggplot(scores, aes(x=max_score, y=odd)) + 
+    geom_errorbar(aes(ymin=ci_low_odd, ymax=ci_up_odd), width=.1, position=pd) +
+    geom_line(position=pd) +
+    geom_point(position=pd) + theme_bw() + scale_y_log10(limits = c(0.001, 200), breaks=c(0.001,0.01,0.1,1,10,100), labels = c("1/1000", "1/100", "1/10", "1","10","100")) 
+#+ scale_y_discrete(name, breaks, labels, limits)
+
+# pd <- position_dodge(0.1) # move them .05 to the left and right
+# ggplot(scores, aes(x=max_score, y=outcome_pr)) + 
+#     geom_errorbar(aes(ymin=outcome_pr - ci, ymax=outcome_pr + ci), width=.1, position=pd) +
+#     geom_line(position=pd) +
+#     geom_point(position=pd) + theme_bw()
+# 
+# library(MASS)
+# frac <- factor(as.character(fractions(round(scores$odd, 1))), levels = unique(as.character(fractions(round(scores$odd, 1)))))
+# frac 
+# 
+# ggplot(scores, aes(x=max_score, y=frac)) + 
+#     geom_line(position=pd) +
+#     geom_point(position=pd) + theme_bw()
+```
+
+
+
+```{r}
+thresholds <- c("<4", "[4, 8)", "[8, 14)", "[14, 20)", ">=20")
+odds <- c("< 1:100","1:100 - 1:25", "1:25 -  1:5", "1:5 - 1:1", ">1:1")
+risk_grade <- c("Very Low", "Low", "Average", "High", "Very High")
+
+data <- data.frame(thresholds, odds, risk_grade)
+colnames(data) <- c("Score range", "Expected death/discharge odds", "Risk grade")
+data %>% flextable(cwidth = 1.5) %>%
+  theme_box() %>%
+  align(align = "center", part = "all") 
 
 
 ```
+```{r}
+data <- filter(scores, max_score %in% c(4,8,14,20))
+
+ggplot(data, aes(x=max_score, y=odd, color = "")) + 
+    geom_errorbar(aes(ymin=ci_low_odd, ymax=ci_up_odd), width=.1, position=pd) +
+    geom_line(position=pd) +
+    geom_point(position=pd) + theme_bw() + scale_y_log10(breaks = c(0.01,0.04,0.2,1), ,labels = c("1/100","1/25","1/5","1")) + ylab("Odds + 95% CI") + xlab("Score grades") + theme(legend.position = "none")
+
+```
+
+
+
+
+
+
+
 
 
 
